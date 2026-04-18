@@ -3,10 +3,11 @@
 > Tired of manually downloading and replacing the Nextcloud Desktop AppImage on Linux? This tool hooks into your app launcher and automatically checks for new releases every time you open Nextcloud.
 
 A lightweight Bash solution that:
-- Checks the installed AppImage version against the **latest GitHub release** (`nextcloud-releases/desktop`)
+- **Auto-discovers** the AppImage inside a dedicated folder (e.g. `~/App/Nextcloud/`) — no hardcoded filename needed
+- Checks the installed version (from the filename pattern `Nextcloud-X.X.X-x86_64.AppImage`) against the **latest GitHub release** (`nextcloud-releases/desktop`)
 - **Asks the user** before downloading anything
-- Downloads the new `.AppImage`, replaces the old one **in-place**, and keeps a `.bak` backup
-- Falls back to launching the existing Nextcloud on any error (network, download, etc.)
+- Downloads the new `.AppImage`, replaces the old one **in-place**, keeps a `.bak` backup
+- Falls back to launching the existing Nextcloud on any error
 - Creates a `.desktop` launcher automatically if none is found
 - Sends **desktop notifications** with the result
 
@@ -14,9 +15,9 @@ A lightweight Bash solution that:
 
 ## 📋 Requirements
 
-- Any Linux distro (not Debian-specific — no `dpkg` needed)
+- Any Linux distro (no `dpkg` needed)
 - `curl` (usually pre-installed)
-- Nextcloud Desktop installed as `.AppImage`
+- Nextcloud Desktop installed as `.AppImage` with version in the filename (e.g. `Nextcloud-33.0.2-x86_64.AppImage`)
 - `notify-send` for desktop notifications (optional — gracefully skipped if missing)
 
 ---
@@ -38,17 +39,30 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-During setup you will be asked for the path to your AppImage. Default: `~/App/Nextcloud-x86_64.AppImage`.
+During setup you will be asked for the **folder** where your AppImage lives. Default: `~/App/Nextcloud`.
 
 The setup script will:
-1. Ask for the path of your existing Nextcloud AppImage
-2. Create `/usr/local/bin/nextcloud-update` with the path baked in
-3. Make it executable
-4. Find the system `.desktop` or create one from scratch
-5. Patch the `Exec=` line to run the updater
-6. Refresh the application launcher database
+1. Ask for the folder containing your AppImage (e.g. `~/App/Nextcloud/`)
+2. Auto-find the `Nextcloud*.AppImage` file inside that folder
+3. Create `/usr/local/bin/nextcloud-update` with the folder path baked in
+4. Make it executable
+5. Find the system `.desktop` or create one from scratch
+6. Patch the `Exec=` line to run the updater
+7. Refresh the application launcher database
 
 > You will be prompted for your `sudo` password once, to write to `/usr/local/bin/`.
+
+---
+
+## 📁 Folder Structure
+
+```
+~/App/Nextcloud/
+├── Nextcloud-33.0.2-x86_64.AppImage       ← current version (launched)
+└── Nextcloud-33.0.1-x86_64.AppImage.bak   ← previous version (backup)
+```
+
+After each update the old AppImage is kept as `.bak`. You can safely delete it once the new version is confirmed working.
 
 ---
 
@@ -60,6 +74,10 @@ Click Nextcloud in app menu
         ▼
  nextcloud-update runs
         │
+        ├─ Scans ~/App/Nextcloud/ for Nextcloud*.AppImage
+        ├─ Extracts installed version from filename
+        ├─ Fetches latest version from GitHub API
+        │
         ├─ Already up to date?   → notify ✅ → launch Nextcloud
         │
         ├─ New version found?    → ask user [Y/n]
@@ -69,8 +87,8 @@ Click Nextcloud in app menu
         └─ Network/download error → notify ⚠️ → launch Nextcloud anyway
 ```
 
-Version detection uses the filename pattern `Nextcloud-X.X.X-x86_64.AppImage`.
-The latest version is fetched from the official GitHub Releases API:
+Version is read from the filename pattern `Nextcloud-X.X.X-x86_64.AppImage`.
+Latest version is fetched from:
 ```
 https://api.github.com/repos/nextcloud-releases/desktop/releases/latest
 ```
@@ -79,15 +97,15 @@ https://api.github.com/repos/nextcloud-releases/desktop/releases/latest
 
 ## 🖥️ Usage after setup
 
-You can also run the updater manually at any time:
+Run the updater manually at any time:
 
 ```bash
 nextcloud-update
 ```
 
-Or override the AppImage path temporarily:
+Override the folder temporarily:
 ```bash
-NEXTCLOUD_APPIMAGE=/other/path/Nextcloud.AppImage nextcloud-update
+NEXTCLOUD_APPIMAGE_DIR=/other/path/folder nextcloud-update
 ```
 
 ---
