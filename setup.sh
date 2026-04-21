@@ -40,22 +40,22 @@ LOCK_FILE="/tmp/nextcloud-update.lock"
 GITHUB_API="https://api.github.com/repos/nextcloud-releases/desktop/releases/latest"
 
 cleanup() {
-    rm -f "$LOCK_FILE"
-    rm -rf "$TMP_DIR"
+    rm -f "\$LOCK_FILE"
+    rm -rf "\$TMP_DIR"
 }
 trap cleanup EXIT
 
-if [ -f "$LOCK_FILE" ]; then
-    PID=$(cat "$LOCK_FILE")
-    if kill -0 "$PID" 2>/dev/null; then
-        MSG="⚠️ Update già in corso (PID: $PID)"
-        echo "$MSG"
-        notify-send "Nextcloud" "$MSG" --icon=nextcloud 2>/dev/null || true
+if [ -f "\$LOCK_FILE" ]; then
+    PID=\$(cat "\$LOCK_FILE")
+    if kill -0 "\$PID" 2>/dev/null; then
+        MSG="⚠️ Update già in corso (PID: \$PID)"
+        echo "\$MSG"
+        notify-send "Nextcloud" "\$MSG" --icon=nextcloud 2>/dev/null || true
         exit 1
     fi
-    rm -f "$LOCK_FILE"
+    rm -f "\$LOCK_FILE"
 fi
-echo $$ > "$LOCK_FILE"
+echo \$\$ > "\$LOCK_FILE"
 
 RED='\\033[0;31m'
 GREEN='\\033[0;32m'
