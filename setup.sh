@@ -38,16 +38,24 @@ set -e
 
 LOCK_FILE="/tmp/nextcloud-update.lock"
 GITHUB_API="https://api.github.com/repos/nextcloud-releases/desktop/releases/latest"
+TMP_DIR=""
 
 cleanup() {
     rm -f "\$LOCK_FILE"
-    rm -rf "\$TMP_DIR"
+    [ -n "\$TMP_DIR" ] && [ -d "\$TMP_DIR" ] && rm -rf "\$TMP_DIR"
 }
 trap cleanup EXIT
 
+# exec sostituisce il processo → trap EXIT non parte: pulisci prima
+run_appimage() {
+    rm -f "\$LOCK_FILE"
+    [ -n "\$TMP_DIR" ] && [ -d "\$TMP_DIR" ] && rm -rf "\$TMP_DIR"
+    exec "\$1"
+}
+
 if [ -f "\$LOCK_FILE" ]; then
-    PID=\$(cat "\$LOCK_FILE")
-    if kill -0 "\$PID" 2>/dev/null; then
+    PID=\$(cat "\$LOCK_FILE" 2>/dev/null || echo "")
+    if [ -n "\$PID" ] && kill -0 "\$PID" 2>/dev/null; then
         MSG="⚠️ Update già in corso (PID: \$PID)"
         echo "\$MSG"
         notify-send "Nextcloud" "\$MSG" --icon=nextcloud 2>/dev/null || true
@@ -108,7 +116,7 @@ if [ \$CURL_EXIT -ne 0 ]; then
     MSG="❌ Errore curl (exit \$CURL_EXIT)"
     log_error "\$MSG"
     notify-send "Nextcloud" "\$MSG" --icon=nextcloud 2>/dev/null || true
-    [ -n "\$APPIMAGE_PATH" ] && exec "\$APPIMAGE_PATH" || exit 1
+    [ -n "\$APPIMAGE_PATH" ] && run_appimage "\$APPIMAGE_PATH" || exit 1
 fi
 
 REMOTE_VERSION=\$(echo "\$API_RESPONSE" | grep '"tag_name"' | head -1 | grep -oP '"tag_name":\s*"\K[^"]+')
@@ -117,7 +125,7 @@ if [ -z "\$REMOTE_VERSION" ]; then
     MSG="❌ Impossibile recuperare versione"
     log_error "\$MSG"
     notify-send "Nextcloud" "\$MSG" --icon=nextcloud 2>/dev/null || true
-    [ -n "\$APPIMAGE_PATH" ] && exec "\$APPIMAGE_PATH" || exit 1
+    [ -n "\$APPIMAGE_PATH" ] && run_appimage "\$APPIMAGE_PATH" || exit 1
 fi
 
 log_info "Ultima versione disponibile: \$REMOTE_VERSION"
@@ -126,7 +134,7 @@ REMOTE_CLEAN="\${REMOTE_VERSION#v}"
 if [ -n "\$INSTALLED" ] && [ "\$INSTALLED" = "\$REMOTE_CLEAN" ]; then
     log_info "Nextcloud è già aggiornato (\$INSTALLED). Avvio..."
     notify-send "Nextcloud" "✅ Già aggiornato (\$INSTALLED)" --icon=nextcloud 2>/dev/null || true
-    exec "\$APPIMAGE_PATH"
+    run_appimage "\$APPIMAGE_PATH"
 fi
 
 if [ -n "\$INSTALLED" ]; then
@@ -142,15 +150,15 @@ if [ -t 0 ] && [ -t 1 ]; then
     read -r -p "\$(echo -e "\${BLUE}[?]\${NC} Vuoi aggiornare ora? [Y/n] ")" answer
     [[ "\$answer" == "n" || "\$answer" == "N" ]] && {
         log_info "Rimandato. Avvio Nextcloud..."
-        [ -n "\$APPIMAGE_PATH" ] && exec "\$APPIMAGE_PATH" || { log_error "Nessuna AppImage disponibile."; exit 1; }
+        [ -n "\$APPIMAGE_PATH" ] && run_appimage "\$APPIMAGE_PATH" || { log_error "Nessuna AppImage disponibile."; exit 1; }
     }
 else
     if command -v zenity &>/dev/null; then
-        zenity --question --title="Nextcloud Update" --text="\$MSG\n\nVuoi aggiornare ora?" --ok-label="Aggiorna" --cancel-label="Annulla" 2>/dev/null || exec "\$APPIMAGE_PATH"
+        zenity --question --title="Nextcloud Update" --text="\$MSG\n\nVuoi aggiornare ora?" --ok-label="Aggiorna" --cancel-label="Annulla" 2>/dev/null || run_appimage "\$APPIMAGE_PATH"
     else
         echo "⚠️ \$MSG - zenity non disponibile, avvio Nextcloud..."
         notify-send "Nextcloud" "⚠️ \$MSG - Apri da terminale per aggiornare" --icon=nextcloud 2>/dev/null || true
-        [ -n "\$APPIMAGE_PATH" ] && exec "\$APPIMAGE_PATH" || exit 1
+        [ -n "\$APPIMAGE_PATH" ] && run_appimage "\$APPIMAGE_PATH" || exit 1
     fi
 fi
 
@@ -173,24 +181,33 @@ log_info "Download \$APPIMAGE_FILENAME..."
 notify-send "Nextcloud" "⬇️  Scaricamento Nextcloud \$REMOTE_CLEAN..." --icon=nextcloud 2>/dev/null || true
 TMP_DIR=\$(mktemp -d)
 
-if ! curl -L --max-time 120 "\$APPIMAGE_URL" -o "\$TMP_DIR/\$APPIMAGE_FILENAME"; then
+HTTP_CODE=\$(curl -L --max-time 300 \\
+    -w '%{http_code}' \\
+    -o "\$TMP_DIR/\$APPIMAGE_FILENAME" \\
+    "\$APPIMAGE_URL" 2>/dev/null) || {
     MSG="❌ Download fallito"
     log_error "\$MSG"
     notify-send "Nextcloud" "\$MSG" --icon=nextcloud 2>/dev/null || true
-    [ -n "\$APPIMAGE_PATH" ] && exec "\$APPIMAGE_PATH" || exit 1
-fi
+    [ -n "\$APPIMAGE_PATH" ] && run_appimage "\$APPIMAGE_PATH" || exit 1
+}
 
-if [ ! -s "\$TMP_DIR/\$APPIMAGE_FILENAME" ]; then
-    MSG="❌ File scaricato vuoto/corretto"
+if [ "\$HTTP_CODE" != "200" ]; then
+    MSG="❌ HTTP \$HTTP_CODE durante il download"
     log_error "\$MSG"
     notify-send "Nextcloud" "\$MSG" --icon=nextcloud 2>/dev/null || true
     exit 1
 fi
 
-EXPECTED_SIZE=\$(curl -LsI "\$APPIMAGE_URL" | grep -i content-length | awk '{print \$2}' | tr -d '\r')
-ACTUAL_SIZE=\$(stat -c%s "\$TMP_DIR/\$APPIMAGE_FILENAME" 2>/dev/null)
-if [ -n "\$EXPECTED_SIZE" ] && [ "\$ACTUAL_SIZE" != "\$EXPECTED_SIZE" ]; then
-    MSG="❌ Dimensione non valida (atteso: \$EXPECTED_SIZE, ottenuto: \$ACTUAL_SIZE)"
+if [ ! -s "\$TMP_DIR/\$APPIMAGE_FILENAME" ]; then
+    MSG="❌ File scaricato vuoto/corrotto"
+    log_error "\$MSG"
+    notify-send "Nextcloud" "\$MSG" --icon=nextcloud 2>/dev/null || true
+    exit 1
+fi
+
+# Verifica magic ELF (AppImage deve iniziare con 0x7F ELF)
+if ! head -c 4 "\$TMP_DIR/\$APPIMAGE_FILENAME" | grep -q "ELF"; then
+    MSG="❌ File non è un ELF/AppImage valido"
     log_error "\$MSG"
     notify-send "Nextcloud" "\$MSG" --icon=nextcloud 2>/dev/null || true
     exit 1
@@ -210,7 +227,7 @@ log_info "Aggiornamento completato!"
 notify-send "Nextcloud" "🎉 Aggiornato a \$REMOTE_CLEAN!" --icon=nextcloud 2>/dev/null || true
 
 log_info "Avvio Nextcloud \$REMOTE_CLEAN..."
-exec "\$NEW_APPIMAGE_PATH"
+run_appimage "\$NEW_APPIMAGE_PATH"
 SCRIPT
 
 ok "Script nextcloud-update creato."
@@ -260,6 +277,8 @@ fi
 # ── 4. Patch Exec= ───────────────────────────────────────────
 info "Aggiorno Exec= nel .desktop..."
 sed -i 's|^Exec=.*|Exec=bash -c "nextcloud-update"|' "$DESKTOP_LOCAL"
+# Rimuovi TryExec che potrebbe puntare a un binario inesistente e nascondere la voce dal menu
+sed -i '/^TryExec=/d' "$DESKTOP_LOCAL"
 ok "Exec= aggiornato."
 
 # ── 5. Refresh launcher ──────────────────────────────────
